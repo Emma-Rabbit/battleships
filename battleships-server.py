@@ -1,7 +1,7 @@
 #!/bin/env python3
 import socket
 import json
-import threading
+from copy import deepcopy
 
 BUFF_SIZE = 1024
 
@@ -51,7 +51,7 @@ class Server:
         if act == 'userRegister':
             userRegister(data)
         elif act == 'roomList':
-            pass
+            joinRoom(data)
         elif act == 'roomCreate':
             createRoom(data)
         elif act == 'roomJoin':
@@ -66,9 +66,22 @@ class Server:
         msg = {'sessionID':self.usridCounter}
         self.activeUsers.append(user)
         self.usridCounter += 1
+        msg = json.dumps(msg)
         sendData(msg)
     
     def listRooms(self, data):
+        if data['sessionId'] not in data:
+            #ERROR
+            pass
+        rooms = deepcopy(self.activeRooms)
+        for i in rooms:
+            if rooms[i]['roomPassword'] not in rooms[i]:
+                rooms[i]['passwordNeeded'] = False
+            else:
+                rooms[i]['passwordNeeded'] = True
+                rooms[i].pop('roomPassword')
+        msg = json.loads(rooms)
+        sendData(msg)
         pass
 
     def createRoom(self, data):
@@ -78,20 +91,23 @@ class Server:
                 #ERROR
                 pass
         room = {}
-        room['roomOwner'] = data['sessionId']
+        room['roomCreator'] = data['sessionId']
         room['roomName'] = data['roomName']
         if data['roomPassword'] in data:
             room['roomPassword'] = data['roomPassword']
         room['boardWidth'] = data['boardWidth']
         room['boardHeight'] = data['boardHeight']
-        room['roomDescription'] = data['roomDescription']
+        if data['roomDescription'] in data:
+            room['roomDescription'] = data['roomDescription']
         room['battleships'] = data['batleships']
         room['roomId'] = self.roomidCounter
         room['usercount'] = 1
-        room['assignedUsers'] = [room['roomOwner']]
+        creator = {'isCreator' : True}
+        room['players'][room['roomCreator']] = creator
         self.roomidCounter += 1
         self.activeRooms.append(room)
         msg = {'roomId': room['roomId']}
+        msg = json.dumps(msg)
         sendData(msg)
 
     def joinRoom(self, data):
@@ -111,10 +127,70 @@ class Server:
                             #ERROR
                             break
                 self.activeRooms[i]['usercount'] += 1
-                self.activeRooms[i]['assignedUsers'].append(data['sessionId'])
+                player = {'isCreator': False}
+                self.activeRooms[i]['players'][data['sessionId']] = player
                 msg = {'status':'successful'}
+                msg = json.dumps(msg)
                 sendData(msg)
                 break
         if roomId == -1:
-            pass #ERROR
+            #ERROR
+            pass 
     
+    def checkBoard(self, data):
+        room = {}
+        for i in self.activeRooms:
+            players = self.activeRooms[i]['players']
+            if data['sessionId'] in players:
+                room = self.activeRooms[i]
+                break
+            elif i == len(self.activeRooms):
+                #ERROR
+                pass
+        board = data['board']
+        boardCopy = deepcopy(data['board'])
+        neighbourMap = []
+        for i in range(data['boardWidth']):
+            a = []
+            neighbourMap.append(a)
+            for j in range(data['boardHeight']):
+                neighbourMap[i].append(0)
+        for i in range(room['boardHeight']):
+            counter = 0
+            n = 0
+            for j in range(room['boardWidth']):
+                if board[i][j] != 0 and counter == 0:
+                    if board[i][j + 1] == 0:
+                        continue
+                    n = board[i][j]
+                    counter += 1
+                    boardCopy[i][j] = 0
+                    neighbourMap[i][j]
+                elif counter > 0:
+                    if board[i][j] != n:
+                        #ERROR
+                        pass
+                    elif counter > n:
+                        #ERROR
+                        pass
+                    boardCopy[i][j] = 0
+                    counter += 1
+        for j in range(room['boardWidth']):
+            counter = 0 
+            n = 0
+            for i in range(room['boardHeight']):
+                if board[i][j] != 0 and counter == 0:
+                    if board[i + 1][j] == 0:
+                        continue
+                    n = board[i][j]
+                    counter += 1
+                    boardCopy[i][j] = 0
+                elif counter > 0:
+                    if board[i][j] != n:
+                        #ERROR
+                        pass
+                    elif counter > n:
+                        #ERROR
+                        pass
+                    boardCopy[i][j] = 0
+                    counter += 1
