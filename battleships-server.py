@@ -4,8 +4,9 @@ import socket
 import json
 from copy import deepcopy
 import threading
+from os.path import dirname
+from connectionManager import connectionManager
 
-BUFF_SIZE = 8
 #room
 #   roomCreator
 #   roomName
@@ -23,82 +24,53 @@ BUFF_SIZE = 8
 #           userName
 #           port
 #           addr
-#           userSession
 #           board
 class Server:
     def __init__(self):
-        self.HOST = '127.0.0.1'
-        self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # self.HOST = '127.0.0.1'
+        # self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.threads = []
         self.usridCounter = 0
         self.activeUsers = []
         self.roomidCounter = 0
         self.activeRooms = []
-        f = open('config.json','r')
+        f = open(dirname(__file__) + '/config.json','r')
         r = f.read()
         x = json.loads(r)
         self.PORT = x['PORT']
-        self.s.bind((self.HOST, self.PORT))
+        # self.s.bind((self.HOST, self.PORT))
+        self.connmng = connectionManager(self.PORT)
 
     def recvData(self):
-        self.s.listen(10)
-        self.conn, self.addr = self.s.accept()
-        fullData = ''
-        data = self.conn.recv(BUFF_SIZE)
-        fullData += data.decode('utf-8')
-        if bytes('\0'.encode('utf-8')) not in data[:BUFF_SIZE]:
-            while True:
-                #print(fullData)
-                data = self.conn.recv(BUFF_SIZE)
-                fullData += data.decode('utf-8')
-                if bytes('\0'.encode('utf-8')) in data:
-                    #data = self.conn.recv(BUFF_SIZE)
-                    #fullData += data.decode('utf-8')
-                    break
-        fullData = json.loads(fullData[: -1])
-        return fullData
+        self.connmng.f(self.manageActions)
 
-    def sendData(self, data):
-        data += '\0'
-        self.conn.send(bytes(data[: BUFF_SIZE].encode('utf-8')))
-        n = BUFF_SIZE
-        if '\0' not in data[: BUFF_SIZE]:
-            while True:
-                self.conn.send(bytes(data[n : n + BUFF_SIZE].encode('utf-8')))
-                n += BUFF_SIZE
-                if '\0' in data[n : n + BUFF_SIZE]:
-                    self.conn.send(bytes(data[n : len(data)].encode('utf-8')))
-                    break
-
-    def manageActions(self, data):
+    def manageActions(self, data, addr):
         #potem obsługa błędów
         print(data)
         act = data['action']
         if act == 'userRegister':
-            self.userRegister(data)
+            return self.userRegister(data, addr)
         elif act == 'roomList':
-            self.joinRoom(data)
+            return self.joinRoom(data)
         elif act == 'roomCreate':
-            self.createRoom(data)
+            return self.createRoom(data)
         elif act == 'roomJoin':
-            self.joinRoom(data)
+            return self.joinRoom(data)
         elif act == 'boardSet':
-            self.checkBoard(data)
+            return self.checkBoard(data)
         elif act == 'roomList':
-            self.listRooms(data)
+            return self.listRooms(data)
     
-    def userRegister(self, data):
+    def userRegister(self, data, addr):
         user = {}
         user['userName'] = data['userName']
         user['port'] = data['port']
-        user['addr'] = self.addr
-        user['userSession'] = self.usridCounter
+        user['addr'] = addr
+        user['sessionId'] = self.usridCounter
         msg = {'sessionId':self.usridCounter}
         self.activeUsers.append(user)
         self.usridCounter += 1
-        msg = json.dumps(msg)
-        self.sendData(msg)
-        print('Registered user ', data['userName'])
+        return msg
     
     def listRooms(self, data):
         if data['sessionId'] not in data:
@@ -111,29 +83,28 @@ class Server:
             else:
                 i['passwordNeeded'] = True
                 i.pop('roomPassword')
-        msg = json.dumps(rooms)
-        self.sendData(msg)
-        pass
+        return rooms
     
     def createRoom(self, data):
-        properties = ['sessionId', 'roomName', 'boardWidth', 'boardHight', 'battleships']
+        properties = ['sessionId', 'roomName', 'boardWidth', 'boardHeight', 'battleships']
         for i in properties:
-            if data[i] not in data:
+            if i not in data:
                 #ERROR
                 pass
         room = {}
         room['roomCreator'] = data['sessionId']
         room['roomName'] = data['roomName']
-        if data['roomPassword'] in data:
+        if 'roomPassword' in data:
             room['roomPassword'] = data['roomPassword']
         room['boardWidth'] = data['boardWidth']
         room['boardHeight'] = data['boardHeight']
-        if data['roomDescription'] in data:
+        if 'roomDescription' in data:
             room['roomDescription'] = data['roomDescription']
-        room['battleships'] = data['batleships']
+        room['battleships'] = data['battleships']
         room['roomId'] = self.roomidCounter
         room['usercount'] = 1
         creator = {'isCreator' : True}
+        room['players'] = [room['roomCreator']]
         room['players'][room['roomCreator']] = creator
         room['players'][room['roomCreator']]['ready'] = False
         for i in self.activeUsers:
@@ -143,8 +114,7 @@ class Server:
         self.roomidCounter += 1
         self.activeRooms.append(room)
         msg = {'roomId': room['roomId']}
-        msg = json.dumps(msg)
-        self.sendData(msg)
+        return msg
     
     def joinRoom(self, data):
         if data['sessionId'] not in data:
@@ -167,14 +137,12 @@ class Server:
                 i['players'][data['sessionId']] = player
                 i['players'][data['sessionId']]['ready'] = False
                 msg = {'status':'successful'}
-                msg = json.dumps(msg)
-                self.sendData(msg)
-                break
+                return msg
         if roomId == -1:
             #ERROR
             pass 
     
-    def markCell(self, board, x, y, side):
+    def markcell(self, board, x, y, side):
         if side == 'top':
             for i in range(y - 1, y + 1):
                 try:
@@ -228,7 +196,7 @@ class Server:
                     n = board[i][j]
                     counter += 1
                     boardCopy[i][j] = 0
-                    markCell(neighbourMap, i, j, 'left')
+                    self.markcell(neighbourMap, i, j, 'left')
                 elif counter > 0:
                     if board[i][j] != n:
                         #ERROR
@@ -238,10 +206,10 @@ class Server:
                         pass
                     boardCopy[i][j] = 0
                     counter += 1
-                    markCell(neighbourMap, i, j, 'top')
-                    markCell(neighbourMap, i, j, 'bottom')
+                    self.markcell(neighbourMap, i, j, 'top')
+                    self.markcell(neighbourMap, i, j, 'bottom')
                     if counter == n:
-                        markCell(neighbourMap, i, j, 'right')
+                        self.markcell(neighbourMap, i, j, 'right')
         for j in range(room['boardWidth']):
             counter = 0 
             n = 0
@@ -252,7 +220,7 @@ class Server:
                     n = board[i][j]
                     counter += 1
                     boardCopy[i][j] = 0
-                    markCell(neighbourMap, i, j, 'top')
+                    self.markcell(neighbourMap, i, j, 'top')
                 elif counter > 0:
                     if board[i][j] != n:
                         #ERROR
@@ -262,10 +230,10 @@ class Server:
                         pass
                     boardCopy[i][j] = 0
                     counter += 1
-                    markCell(neighbourMap, i, j, 'left')
-                    markCell(neighbourMap, i, j, 'right')
+                    self.markcell(neighbourMap, i, j, 'left')
+                    self.markcell(neighbourMap, i, j, 'right')
                     if counter == n:
-                        markCell(neighbourMap, i, j, 'botoom')
+                        self.markcell(neighbourMap, i, j, 'botoom')
         for i in range(data['boardHeight']):
             for j in range(data['boardWidth']):
                 if board[i][j] != 0 and neighbourMap[i][j] == -1:
@@ -274,10 +242,9 @@ class Server:
         #przypisać board do gracza tutaj
         room['players'][data['sessionId']]['board'] = data['board']
         msg = {'status': 'success'}
-        msg = json.dumps(msg)
-        sendData(msg)
         #dodać do gracza status gotowości
         room['players'][data['sessionId']]['ready'] = True
+        return msg
     
     def chceckIfReady(self):
         for i in self.activeRooms:
@@ -294,24 +261,21 @@ class Server:
             if ready:
                 pass #stworzyć thread
 
-class Thred(threading.Thread):
+class Game(threading.Thread):
     def __init__(self, threadID, room):
         threading.Thread.__init__(self)
         self.threadID = threadID
         self.player = []
-        # self.player[0] = player1
-        # self.player[1] = player2
-        self.ss = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sr = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sr.bind(('127.0.0.1', 1234)) #co rzobić z portem? xd
         self.currentPlayer = -1
         self.room = room
         for i in self.room['players']:
-            n = 0
-            self.player[n] = i
-            n += 1
+            x = self.room['players'][i]
+            self.player.append(x)
+        self.port = 42069 + threadID
+        self.connmng = connectionManager(self.port)
     
     def run(self):
+        #wysłać powiadomienie o nowym porcie
         #wysłać powiadomienia o początku gry
         #wybrać pierwszego gracza
         #while gameOn:
@@ -322,65 +286,34 @@ class Thred(threading.Thread):
         #sprawdzić koniec gry
         #wysłać zmiany do drugiego gracza?
         #zmienić currentPlayer
-        self.sendStartNotif()
-        self.choosePlayer()
+        self.connmng.g(self.sendNewPort, self.player[0]['addr'], self.player[0]['port'])
+        self.connmng.g(self.sendNewPort, self.player[1]['addr'], self.player[1]['port'])
+        self.connmng.g(self.sendStartNotif, self.player[0]['addr'], self.player[0]['port'])
+        self.connmng.g(self.sendStartNotif, self.player[1]['addr'], self.player[1]['port'])
         gameOn = True
         while gameOn:
-            self.sendTurnNotif()
-            self.recvMove()
+            self.connmng.g(self.sendTurnNotif, self.player[self.currentPlayer]['addr'], self.player[self.currentPlayer]['port'])
+            self.connmng.f(self.recvMove)
             gameOn = self.gameOver()
-            #???
-            self.changePlayer()
+            self.changePlayer
         pass
-    
-    def sendDataFirst(self, playerNo, data):
-        addr = self.player[playerNo]['addr']
-        port = self.player[playerNo]['port']
-        self.ss.connect((addr, port))
-        self.ss.send()
-    
-    def recvData(self):
-        self.s.listen(2)
-        self.conn, self.addr = self.s.accept()
-        fullData = ''
-        data = self.conn.recv(BUFF_SIZE)
-        fullData += data.decode('utf-8')
-        if '\0' not in data:
-            while True:
-                data = self.conn.recv(BUFF_SIZE)
-                fullData += data.decode('utf-8')
-                if '\0' in data:
-                    data = self.conn.recv(BUFF_SIZE)
-                    fullData += data.decode('utf-8')
-                    break
-        return fullData
-    
-    def sendData(self, data):
-        self.conn.send(bytes(data[: BUFF_SIZE].encode('utf-8')))
-        n = BUFF_SIZE
-        if '\0' not in data[: BUFF_SIZE]:
-            while True:
-                self.conn.send(bytes(data[n : n + BUFF_SIZE].encode('utf-8')))
-                n += BUFF_SIZE
-                if '\0' in data[n : n + BUFF_SIZE]:
-                    self.conn.send(bytes(data[n : len(data)].encode('utf-8')))
-                    break
-    
-    def sendStartNotif(self):
+
+    def sendNewPort(self, player):
+        msg = {'port': self.PORT}
+        return msg 
+
+    def sendStartNotif(self, player):
         msg = {'status': 'gameStart'}
-        msg = json.dumps(msg)
-        self.sendDataFirst(0, msg)
-        self.sendDataFirst(1, msg)
+        return msg
     
     def choosePlayer(self):
         self.currentPlayer = random.randint(0,1)
     
     def sendTurnNotif(self):
         msg = {'status' : 'yourTurn'}
-        self.sendDataFirst(self.currentPlayer, msg)
+        return msg
     
-    def recvMove(self):
-        data = recvData()
+    def recvMove(self, data):
         if self.addr != self.player[self.currentPlayer]['addr']:
             #ERROR
             return -1
@@ -394,11 +327,11 @@ class Thred(threading.Thread):
             msg = {'status' : 'hit'}
         else:
             msg = {'status' : 'miss'}
-        msg = json.dumps(msg)
-        self.sendData(msg)
+        return msg
+        
 
     def chceckMove(self, data):
-        if data['x'] < 0 or data['y'] < 0 or data['x'] > self.roomSettings['boardWidth'] or data['y'] > self.roomSettings['boardHeight']:
+        if data['x'] < 0 or data['y'] < 0 or data['x'] > self.room['boardWidth'] or data['y'] > self.room['boardHeight']:
             #ERROR
             return -1
         if self.player[self.currentPlayer]['board'][data['x']][data['y']] == -1:
@@ -442,5 +375,4 @@ class errorMng:
     
 server = Server()
 while True:
-    data = server.recvData()
-    server.manageActions(data)
+    server.recvData()
